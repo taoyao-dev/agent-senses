@@ -7,3 +7,4 @@ _cache/
 .env
 .DS_Store
 _progress.md
+_release.md
