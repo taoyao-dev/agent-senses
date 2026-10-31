@@ -1,0 +1,11 @@
+# 核心
+mcp>=1.30
+httpx>=0.28
+playwright>=1.40
+
+# 转写（不需要转写可以不装）
+faster-whisper>=1.2
+numpy
+
+# ffmpeg —— 不装也行，会退到 PATH 上的 ffmpeg
+imageio-ffmpeg
