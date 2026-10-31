@@ -6,3 +6,4 @@ _cache/
 *.log
 .env
 .DS_Store
+_progress.md
