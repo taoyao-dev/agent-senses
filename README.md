@@ -13,6 +13,8 @@ ds_search(query) →  标题 + URL + 摘要 + 长 summary + 发布日期 + 权�
 ds_fetch(url)    →  网页正文（Markdown）
 ```
 
+![一次调用拿到一条完整的视频](docs/demo.png)
+
 ## 装
 
 ```bash

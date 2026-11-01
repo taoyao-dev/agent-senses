@@ -12,6 +12,8 @@ ds_search(query) →  titles + URLs + snippets + long summaries + dates + author
 ds_fetch(url)    →  page body as Markdown
 ```
 
+![One call, one complete video](docs/demo.png)
+
 [中文 README](README.md)
 
 ## Why
