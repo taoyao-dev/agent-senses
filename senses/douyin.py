@@ -28,6 +28,11 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 REFERER = "https://www.douyin.com/"
 _ID_RE = re.compile(r"(?:/video/|/share/video/|modal_id=|/note/)(\d{6,})")
 
+# 会带出 aweme 对象的接口。detail 是最全的那个；另外两个在 detail 没响应时捞一把。
+_AWEME_API = ("/aweme/v1/web/aweme/detail/",
+              "/aweme/v1/web/aweme/post/",
+              "/aweme/v1/web/aweme/related/")
+
 CST = timezone(timedelta(hours=8))
 
 
@@ -51,7 +56,7 @@ def resolve(url: str) -> tuple[str, str]:
 
 # ---------------------------------------------------------------- 抓取
 
-def _capture(video_id: str, timeout_s: float = 30.0) -> tuple[dict, dict[str, str]]:
+def _capture(video_id: str, timeout_s: float = 30.0) -> tuple[dict, dict[str, str], dict]:
     """开一个有头绪的浏览器，同时收「元数据」和「媒体分片地址」。"""
     from playwright.sync_api import sync_playwright
 
@@ -70,10 +75,10 @@ def _capture(video_id: str, timeout_s: float = 30.0) -> tuple[dict, dict[str, st
         def on_response(resp):
             u = resp.url
             try:
-                if "/aweme/v1/web/aweme/detail/" in u and not detail:
-                    j = resp.json()
-                    if j.get("aweme_detail"):
-                        detail.update(j["aweme_detail"])
+                if not detail and any(k in u for k in _AWEME_API):
+                    ad = _pick_aweme(resp.json(), video_id)
+                    if ad:
+                        detail.update(ad)
                 elif "douyinvod.com" in u or "douyin" in u:
                     # ★ 新版播放器直接给合成好的 mp4（路径 /video/tos/...，自带音轨），
                     #   旧版才是分开的 /media-video 和 /media-audio 两条。
@@ -90,33 +95,66 @@ def _capture(video_id: str, timeout_s: float = 30.0) -> tuple[dict, dict[str, st
         pg.goto(f"https://www.douyin.com/video/{video_id}",
                 wait_until="domcontentloaded", timeout=60000)
 
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            muxed = "/video/tos/" in streams.get("video", "")
-            if "video" in streams and detail and (muxed or "audio" in streams):
-                break
-            pg.wait_for_timeout(400)
+        def wait_for(pg, budget: float) -> None:
+            deadline = time.time() + budget
+            while time.time() < deadline:
+                muxed = "/video/tos/" in streams.get("video", "")
+                if "video" in streams and detail and (muxed or "audio" in streams):
+                    return
+                pg.wait_for_timeout(400)
+
+        wait_for(pg, timeout_s)
+        if not detail:
+            # detail 接口没响，可能是页面复用了前端缓存没重放请求 —— 整页重载一次再等
+            try:
+                pg.reload(wait_until="domcontentloaded", timeout=60000)
+                wait_for(pg, 12.0)
+            except Exception:      # noqa: BLE001 —— 重载失败就用已有的东西
+                pass
         pg.wait_for_timeout(1200)      # 给 detail 接口收尾
 
-        dom = _meta_from_dom(pg)       # 接口没拦到时的兜底，趁页面还开着抠
+        dom = _meta_from_dom(pg)       # 兜底：接口缺什么，DOM 补什么
         b.close()
 
     return detail, streams, dom
 
 
+def _pick_aweme(j, video_id: str) -> dict | None:
+    """从一个接口响应里，捞出**就是这条视频**的 aweme 对象；捞不到返回 None。
+
+    按 aweme_id 校验过 —— post/related 这类接口里装的是别人的视频，
+    不校验就会把隔壁的标题作者当成本条的。
+    """
+    if not isinstance(j, dict):
+        return None
+    ad = j.get("aweme_detail")
+    if isinstance(ad, dict):
+        return ad if str(ad.get("aweme_id")) == video_id else None
+    for key in ("aweme_list", "data"):
+        v = j.get(key)
+        if isinstance(v, list):
+            for x in v:
+                if isinstance(x, dict) and str(x.get("aweme_id")) == video_id:
+                    return x
+    return None
+
+
 def _meta_from_dom(pg) -> dict:
-    """兜底：detail 接口没拦到时，从页面 DOM 抠。"""
+    """兜底：detail 接口缺字段时，从页面 DOM 补。"""
     out = {}
-    for key, sel in [
-        ("desc", '[data-e2e="video-desc"]'),
-        ("author", '[data-e2e="video-author-name"]'),
-    ]:
-        try:
-            v = pg.inner_text(sel, timeout=2000).strip()
-            if v:
-                out[key] = v
-        except Exception:
-            pass
+    for key, sels in (
+        ("desc", ('[data-e2e="video-desc"]', '[data-e2e="video-desc-content"]', "h1")),
+        ("author", ('[data-e2e="video-author-name"]', '[data-e2e="user-name"]',
+                    '.account-name')),
+    ):
+        for sel in sels:
+            try:
+                v = pg.inner_text(sel, timeout=1500).strip()
+                if v:
+                    out[key] = v
+                    break
+            except Exception:
+                pass
     return out
 
 
@@ -148,23 +186,34 @@ def fetch(url: str, *, workdir: str | Path | None = None,
 
     item = Item(platform="douyin", id=vid, url=canon)
 
-    # ---- 元数据
-    if detail:
-        item.title = detail.get("desc", "")
-        item.author = (detail.get("author") or {}).get("nickname", "")
-        dur_ms = detail.get("duration") or (detail.get("video") or {}).get("duration")
-        item.duration = round(dur_ms / 1000, 1) if dur_ms else None
-        ct = detail.get("create_time")
-        if ct:
-            item.publish_time = datetime.fromtimestamp(ct, CST).strftime("%Y-%m-%d %H:%M")
-        st = detail.get("statistics") or {}
-        item.stats = Stats(like=st.get("digg_count"), comment=st.get("comment_count"),
-                           collect=st.get("collect_count"), share=st.get("share_count"))
-        item.raw = {"aweme_id": detail.get("aweme_id")}
-    else:
-        notes.append("detail 接口没拦到，元数据降级自 DOM")
-        item.title = dom.get("desc", "")
+    # ---- 元数据：接口优先。
+    # DOM 兜底有坑：播放页会轮播"下一条"，页面上写着的可能根本不是这个 id 的视频。
+    # 所以只有「DOM 里那段文案和接口里的一致」才敢用 DOM 补字段。
+    desc_api = detail.get("desc") or ""
+    desc_dom = dom.get("desc") or ""
+    same_video = bool(desc_api) and (not desc_dom or desc_dom[:15] == desc_api[:15])
+
+    if not detail:
+        notes.append("detail 接口没拦到，元数据取自 DOM；页面可能轮播到别的视频，请核对标题")
+
+    item.title = desc_api or desc_dom
+    item.author = (detail.get("author") or {}).get("nickname") or ""
+    if not item.author and same_video:
         item.author = dom.get("author", "")
+    dur_ms = detail.get("duration") or (detail.get("video") or {}).get("duration")
+    item.duration = round(dur_ms / 1000, 1) if dur_ms else None
+    ct = detail.get("create_time")
+    if ct:
+        item.publish_time = datetime.fromtimestamp(ct, CST).strftime("%Y-%m-%d %H:%M")
+    st = detail.get("statistics") or {}
+    item.stats = Stats(like=st.get("digg_count"), comment=st.get("comment_count"),
+                       collect=st.get("collect_count"), share=st.get("share_count"))
+    item.raw = {"aweme_id": detail.get("aweme_id") or vid}
+
+    if not item.author:
+        notes.append("作者名没拿到（接口和 DOM 都空）")
+    if item.stats.like is None:
+        notes.append("互动数没拿到（这条视频页没返回 statistics）")
 
     # ---- 落盘
     wd = Path(workdir) if workdir else Path.cwd() / "_cache" / vid

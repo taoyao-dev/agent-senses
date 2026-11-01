@@ -121,6 +121,9 @@ Return a `Item`. The shape agents see never changes.
 | `av.open(metadata_errors=)` TypeError | PyAV version mismatch | feed wave+numpy directly, skip decoding |
 | Model load reports incomplete snapshot | `model.bin` not fully downloaded | verify `model.bin` exists before loading |
 | `cublas64_12.dll not found` | cuBLAS missing | fall back to CPU int8 |
+| Transcript mixes Traditional and Simplified | Whisper's Chinese output is unconstrained | `initial_prompt` does not fix it (it made other words worse) — convert with opencc afterwards |
+| DOM fallback reports someone else's author | the player auto-advances to the next video | only trust DOM fields when its caption matches the API's |
+| `author` / `statistics` are empty | the detail endpoint returned a partial payload | match on `aweme_id`; degradation is reported in `notes` |
 
 ## Boundaries
 

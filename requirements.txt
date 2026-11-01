@@ -6,6 +6,8 @@ playwright>=1.40
 # 转写（不需要转写可以不装）
 faster-whisper>=1.2
 numpy
+# whisper 的中文输出会混进繁体，用它统一转简体；不装也能跑，只是可能简繁混排
+opencc-python-reimplemented>=0.1.7
 
 # ffmpeg —— 不装也行，会退到 PATH 上的 ffmpeg
 imageio-ffmpeg

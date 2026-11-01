@@ -108,6 +108,9 @@ tests/             协议层自测
 | `av.open(metadata_errors=)` TypeError | PyAV 版本对不上 | 用 wave+numpy 直喂，绕开解码 |
 | 模型加载报 snapshot 不完整 | `model.bin` 没下完 | 加载前验 `model.bin` 存在 |
 | GPU 报 `cublas64_12.dll not found` | 缺 cuBLAS | 自动退 CPU int8 |
+| 转写里简繁体混着出 | whisper 中文输出不受控 | `initial_prompt` 压不住（实测反而念错更多），事后用 opencc 转 |
+| 兜底抠到的作者不是这条视频的 | 播放页会轮播「下一条」 | 只在 DOM 文案和接口文案一致时才用 DOM 补字段 |
+| `author`/`statistics` 是空的 | detail 接口没吐全 | 拿 `aweme_id` 校验，`notes` 里会写明降级 |
 
 ## 边界（当前版本明确不做）
 

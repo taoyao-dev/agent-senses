@@ -19,6 +19,19 @@ from .models import Segment
 DEFAULT_MODEL = "small"
 _ENV_DIR = "SENSES_WHISPER_DIR"
 
+# whisper 的中文输出会在简繁之间来回跳（同一条音频里"吃點東西"和"宝头强"并存），
+# initial_prompt 压不住 —— 实测反而让别的词念错。只能事后转一遍。
+try:
+    from opencc import OpenCC
+    _S2T = OpenCC("t2s")
+except Exception:            # 没装就原样返回，不阻断转写
+    _S2T = None
+
+
+def to_simplified(text: str) -> str:
+    """繁体转简体。没装 opencc 就原样返回。"""
+    return _S2T.convert(text) if _S2T else text
+
 
 def read_wav_mono16k(path: str | Path) -> np.ndarray:
     """读 16k 单声道 wav 成 float32 数组。"""
@@ -71,7 +84,8 @@ def transcribe(wav: str | Path, *, model: str = DEFAULT_MODEL,
             m = WhisperModel(path, device=dev, compute_type=ct)
             segs, _ = m.transcribe(audio, language=language, beam_size=beam_size,
                                    condition_on_previous_text=False)
-            return [Segment(t=round(s.start, 1), text=s.text.strip()) for s in segs]
+            return [Segment(t=round(s.start, 1), text=to_simplified(s.text.strip()))
+                    for s in segs]
         except Exception as e:      # noqa: BLE001 —— 任何加载/推理失败都降级
             last = e
             continue
